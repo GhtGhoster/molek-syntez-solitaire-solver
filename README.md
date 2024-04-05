@@ -1,7 +1,8 @@
 # MOLEK-SYNTEZ Solitaire solver
 
-I ain't gotten to the solving part just yet, so so far this is just
-a basic playable command line version of the solitaire.
+So far this is just a basic playable command line version of the solitaire.
+The first attempt naturally kills my computer whenever I try to run it cuz I suck at coding tree searches.
+Maybe I'll try something later on.
 
 Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
 

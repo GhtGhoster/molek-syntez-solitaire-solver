@@ -1,4 +1,4 @@
-use std::{fmt::Display, io};
+use std::{collections::HashSet, fmt::Display, hash::Hash, io};
 use colored::Colorize;
 use rand::{thread_rng, Rng};
 
@@ -67,7 +67,6 @@ impl Stack {
             return len;
         }
         let mut ret = 1;
-        println!("{:?}", self.cards);
         while self.cards[len-ret] as usize + 1 == self.cards[len-ret-1] as usize {
             ret += 1;
             if ret == self.cards.len() {
@@ -99,6 +98,22 @@ enum MoveValidity {
 #[derive(Default)]
 struct Matrix {
     stacks: [Stack; 6],
+    available_moves: Vec<(Move, Matrix)>,
+    past_moves: Vec<Move>,
+}
+
+impl PartialEq for Matrix {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_string() == other.to_string()
+    }
+}
+
+impl Eq for Matrix {}
+
+impl Hash for Matrix {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.to_string().hash(state);
+    }
 }
 
 impl Matrix {
@@ -202,21 +217,11 @@ impl Matrix {
 
         // validity check
         let validity: MoveValidity = self.check_validity(move_);
-        match validity {
-            MoveValidity::ValidNormal => {
-                if
-                    self.stacks[to].highest_orderly_count() == self.stacks[to].cards.len() &&
-                    self.stacks[to].cards.len() == 9
-                {
-                    self.stacks[to].collapsed = true;
-                }
-            },
-            MoveValidity::ValidCheat => {
-                self.stacks[to].cheated = true;
-            },
-            MoveValidity::Invalid => {
-                return false;
-            },
+        if validity == MoveValidity::Invalid {
+            return false;
+        }
+        if validity == MoveValidity::ValidCheat {
+            self.stacks[to].cheated = true;
         }
 
         // actual movement
@@ -228,6 +233,14 @@ impl Matrix {
         }
         for _ in 0..count {
             self.stacks[to].cards.push(moving_cards.pop().unwrap());
+        }
+
+        // collapsed check
+        if
+            self.stacks[to].highest_orderly_count() == self.stacks[to].cards.len() &&
+            self.stacks[to].cards.len() == 9
+        {
+            self.stacks[to].collapsed = true;
         }
 
         return true;
@@ -243,8 +256,8 @@ impl Matrix {
         collapsed_count == 4
     }
 
-    fn is_lose(&self) -> bool {
-        !self.valid_moves().is_empty()
+    fn is_finished(&self) -> bool {
+        self.valid_moves().is_empty()
     }
 
     fn valid_moves(&self) -> Vec<Move> {
@@ -264,9 +277,65 @@ impl Matrix {
 
         ret
     }
+
+    fn copy(&self) -> Matrix {
+        let mut matrix: Matrix = Default::default();
+
+        // copy
+        for i in 0..6 {
+            for j in 0..self.stacks[i].cards.len() {
+                matrix.stacks[i].cards.push(self.stacks[i].cards[j]);
+            }
+        }
+        for i in 0..self.past_moves.len() {
+            matrix.past_moves.push(self.past_moves[i]);
+        }
+
+        matrix
+    }
+
+    fn copy_after_move(&self, move_: Move) -> Matrix {
+        let mut matrix: Matrix = self.copy();
+        matrix.move_stack(move_);
+        matrix.past_moves.push(move_);
+        matrix
+    }
+
+    fn to_string(&self) -> String {
+        let mut ret = String::new();
+
+        for stack in &self.stacks {
+            ret.push('S');
+            for card in &stack.cards {
+                ret.push(card.to_char());
+            }
+            if stack.cheated {
+                ret.push('_');
+            }
+        }
+
+        ret
+    }
+
+    fn save_moves(&mut self) {
+        self.available_moves = self
+            .valid_moves()
+            .iter()
+            .map(|move_| (*move_, self.copy_after_move(*move_)))
+            .collect();
+        self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
+    }
+
+    fn prune(&mut self, past_matrices: &HashSet<Matrix>) {
+        for i in (0..self.available_moves.len()).rev() {
+            if past_matrices.contains(&self.available_moves[i].1) {
+                self.available_moves.remove(i);
+            }
+        }
+    }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Move {
     from: usize,
     to: usize,
@@ -299,24 +368,51 @@ fn main() {
     //      - sort by most available moves (maybe cache those)
     //      - account for reversible moves (and remove them, here cache would also be useful)
 
-
     #[allow(unused)]
     let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
-
-    // matrix.stacks[0].cheated = true;
-    // matrix.stacks[2].collapsed = true;
-    // matrix.move_stack(0, 5, 2);
-
-    // println!();
-    // print_matrix(&matrix);
     
-    gameplay_loop(&mut matrix);
+    print_matrix(&matrix);
+    let winner = find_win(&mut matrix);
+    for mov in winner.unwrap().past_moves {
+        println!("{mov:?}");
+    }
+
+    // gameplay_loop(&mut matrix);
+}
+
+#[allow(dead_code)]
+fn find_win(matrix: &mut Matrix) -> Option<Matrix> {
+    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+    past_matrices.insert(matrix.copy());
+
+    matrix.save_moves();
+    matrix.prune(&past_matrices);
+
+    if matrix.available_moves.is_empty() {
+        if matrix.is_win() {
+            return Some(matrix.copy());
+        } else {
+            println!("Found a dead end");
+            return None;
+        }
+    } else {
+        for i in 0..matrix.available_moves.len() {
+            let result = find_win(&mut matrix.available_moves[i].1);
+            if result.is_none() {
+                continue;
+            } else {
+                return result;
+            }
+        }
+    }
+    None
 }
 
 #[allow(dead_code)]
 fn gameplay_loop(matrix: &mut Matrix) {
-    while !matrix.is_win() && !matrix.is_lose() {
+    println!("{:?}", matrix.valid_moves());
+    while !matrix.is_finished() {
         print_matrix(&matrix);
         let move_: Move = Move::from_input();
         if matrix.move_stack(move_) {
@@ -327,8 +423,7 @@ fn gameplay_loop(matrix: &mut Matrix) {
     }
     if matrix.is_win() {
         println!("You's a winzies!!1!:D");
-    }
-    if matrix.is_lose() {
+    } else {
         println!("You loozies :,ccc");
     }
 }
