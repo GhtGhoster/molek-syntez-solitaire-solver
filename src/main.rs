@@ -126,7 +126,20 @@ impl Matrix {
             }
         }
 
-        // TODO: check for wrong input
+        // check input validity
+        // Inefficient and potentially unsafe due to user-input based depth recursion, don't care tho.
+        let mut type_count_array: [usize; 9] = [0; 9];
+        for stack in &matrix.stacks {
+            for card in &stack.cards {
+                type_count_array[*card as usize] += 1;
+            }
+        }
+        for i in 0..9 {
+            if type_count_array[i] != 4 {
+                println!("Wrong input parity, try again:");
+                return Matrix::from_input();
+            }
+        }
 
         matrix
     }
@@ -151,7 +164,8 @@ impl Matrix {
         matrix
     }
 
-    fn check_validity(&self, to: usize, from: usize, count: usize) -> MoveValidity {
+    fn check_validity(&self, move_: Move) -> MoveValidity {
+        let Move{from, to, count} = move_;
         if
             self.stacks[to].collapsed ||
             self.stacks[from].collapsed ||
@@ -183,9 +197,11 @@ impl Matrix {
         return MoveValidity::Invalid;
     }
 
-    fn move_stack(&mut self, from: usize, to: usize, count: usize) -> bool {
+    fn move_stack(&mut self, move_: Move) -> bool {
+        let Move{from, to, count} = move_;
+
         // validity check
-        let validity: MoveValidity = self.check_validity(to, from, count);
+        let validity: MoveValidity = self.check_validity(move_);
         match validity {
             MoveValidity::ValidNormal => {
                 if
@@ -226,16 +242,62 @@ impl Matrix {
         }
         collapsed_count == 4
     }
+
+    fn is_lose(&self) -> bool {
+        !self.valid_moves().is_empty()
+    }
+
+    fn valid_moves(&self) -> Vec<Move> {
+        let mut ret = vec![];
+
+        for from in 0..6 {
+            let highest_orderly_count = self.stacks[from].highest_orderly_count();
+            for count in 1..=highest_orderly_count {
+                for to in 0..6 {
+                    let move_: Move = Move {from, to , count};
+                    if self.check_validity(move_) != MoveValidity::Invalid {
+                        ret.push(move_);
+                    }
+                }
+            }
+        }
+
+        ret
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Move {
+    from: usize,
+    to: usize,
+    count: usize,
+}
+
+impl Move {
+    fn from_input() -> Move {
+        let mut buffer: String = String::new();
+        io::stdin().read_line(&mut buffer).unwrap();
+        let tokens: Vec<&str> = buffer.trim().split(" ").collect();
+        let from: usize = tokens[0].parse().unwrap();
+        let to: usize = tokens[1].parse().unwrap();
+        let count: usize = tokens[2].parse().unwrap();
+        Move {
+            from,
+            to,
+            count
+        }
+    }
 }
 
 fn main() {
     // TODO:
-    // - determine possible moves
-    // - determine loss condition
     // - copy matrix
     // - matrix hash function
     // - tree exploration
     // - heuristics
+    //      - minimize cheating
+    //      - sort by most available moves (maybe cache those)
+    //      - account for reversible moves (and remove them, here cache would also be useful)
 
 
     #[allow(unused)]
@@ -254,21 +316,21 @@ fn main() {
 
 #[allow(dead_code)]
 fn gameplay_loop(matrix: &mut Matrix) {
-    while !matrix.is_win() {
+    while !matrix.is_win() && !matrix.is_lose() {
         print_matrix(&matrix);
-        let mut buffer: String = String::new();
-        io::stdin().read_line(&mut buffer).unwrap();
-        let tokens: Vec<&str> = buffer.trim().split(" ").collect();
-        let from: usize = tokens[0].parse().unwrap();
-        let to: usize = tokens[1].parse().unwrap();
-        let count: usize = tokens[2].parse().unwrap();
-        if matrix.move_stack(from, to, count) {
-            println!("You done did good moved {count} cards [{from}] -> [{to}]");
+        let move_: Move = Move::from_input();
+        if matrix.move_stack(move_) {
+            println!("You done did good moved {} cards [{}] -> [{}]", move_.count, move_.from, move_.to);
         } else {
             println!("You done fucked goofed mister goober\n");
         }
     }
-    println!("You's a winzies!!1!:D");
+    if matrix.is_win() {
+        println!("You's a winzies!!1!:D");
+    }
+    if matrix.is_lose() {
+        println!("You loozies :,ccc");
+    }
 }
 
 #[allow(dead_code)]
