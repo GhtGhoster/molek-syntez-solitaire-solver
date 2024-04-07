@@ -16,6 +16,8 @@ const SPACE_H: i32 = 652 - OFFSET_H;
 const SPACE_V: i32 = 330 - OFFSET_V;
 
 const STEP_LIMIT: usize = 2000;
+const PAST_LIMIT: usize = 20000;
+const ACCEPTABLE_SOLUTION_LEN: usize = 400;
 
 #[derive(Clone, Copy, PartialEq, Debug, EnumIter)]
 enum Card {
@@ -420,43 +422,70 @@ impl Move {
 
 fn main() {
     // TODO:
-    // - find more solutions, pick the shortest ones
     // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
     // - automate the new game repetition process, if no short enough solution can be found, just new game it
 
-    // let mut matrix = Matrix::from_screen();
-    let mut matrix = Matrix::random();
+    let mut matrix = Matrix::from_screen();
+    // let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
     
     // print_matrix(&matrix);
+    let mut winners: Vec<Matrix> = vec![];
     let mut past_matrices: HashSet<Matrix> = HashSet::new();
-    if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
-        println!("Moves: {}", winner.past_moves.len());
-        // execute_moves(&mut matrix, &winner.past_moves);
-    } else {
-        println!("Search over {STEP_LIMIT}");
+    while past_matrices.len() < PAST_LIMIT {
+        if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
+            winners.push(winner);
+        }
     }
-    println!("Past matrices: {}", past_matrices.len());
+    if winners.is_empty() {
+        println!("No winzies :c");
+    } else {
+        winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
+        println!("Bestest winner: {}", winners[0].past_moves.len());
+        execute_moves(&mut matrix, &winners[0].past_moves);
+    }
 
     // gameplay_loop(&mut matrix);
+}
+
+fn loop_wins() {
+    loop {
+        // focus window, click new game, wait
+        let mut matrix = Matrix::from_screen();
+        
+        let mut winners: Vec<Matrix> = vec![];
+        let mut past_matrices: HashSet<Matrix> = HashSet::new();
+        while past_matrices.len() < PAST_LIMIT {
+            if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
+                winners.push(winner);
+            }
+        }
+        if !winners.is_empty() {
+            winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
+            if winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
+                continue;
+            }
+            execute_moves(&mut matrix, &winners[0].past_moves);
+        }
+    }
 }
 
 #[allow(dead_code)]
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
-    println!("Esitmated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf).unwrap();
-    if buf.trim() == "n".to_string() {
-        return;
-    }
+    // println!("Estimated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
+    // let mut buf = String::new();
+    // io::stdin().read_line(&mut buf).unwrap();
+    // if buf.trim() == "n".to_string() {
+    //     return;
+    // }
 
     let mut enigo = Enigo::new();
 
-    // focus window
+    // focus window but don't pick a card if window already focused
     enigo.mouse_move_to(
-        1920 + OFFSET_H,
-        OFFSET_V,
+        1920 + OFFSET_H - SPACE_H,
+        OFFSET_V - SPACE_V,
     );
     sleep(Duration::from_millis(100));
     enigo.mouse_down(enigo::MouseButton::Left);
@@ -465,8 +494,6 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     sleep(Duration::from_millis(100));
 
     for mov in moves {
-        println!("Clicking {mov:?}");
-
         let y_from = matrix.stacks[mov.from].cards.len() - mov.count;
         enigo.mouse_move_to(
             1920 + OFFSET_H + (mov.from as i32 * SPACE_H),
@@ -496,7 +523,7 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
 #[allow(dead_code)]
 fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
-    if past_matrices.len() > 20000 {
+    if past_matrices.len() > PAST_LIMIT {
         return None;
     }
 
