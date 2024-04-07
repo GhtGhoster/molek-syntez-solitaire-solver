@@ -286,6 +286,8 @@ impl Matrix {
             for j in 0..self.stacks[i].cards.len() {
                 matrix.stacks[i].cards.push(self.stacks[i].cards[j]);
             }
+            matrix.stacks[i].cheated = self.stacks[i].cheated;
+            matrix.stacks[i].collapsed = self.stacks[i].collapsed;
         }
         for i in 0..self.past_moves.len() {
             matrix.past_moves.push(self.past_moves[i]);
@@ -373,7 +375,8 @@ fn main() {
     // let mut matrix = Matrix::from_input();
     
     print_matrix(&matrix);
-    let winner = find_win(&mut matrix);
+    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+    let winner = find_win(&mut matrix, &mut past_matrices);
     for mov in winner.unwrap().past_moves {
         println!("{mov:?}");
     }
@@ -382,8 +385,7 @@ fn main() {
 }
 
 #[allow(dead_code)]
-fn find_win(matrix: &mut Matrix) -> Option<Matrix> {
-    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
 
     matrix.save_moves();
@@ -393,12 +395,11 @@ fn find_win(matrix: &mut Matrix) -> Option<Matrix> {
         if matrix.is_win() {
             return Some(matrix.copy());
         } else {
-            println!("Found a dead end");
             return None;
         }
     } else {
         for i in 0..matrix.available_moves.len() {
-            let result = find_win(&mut matrix.available_moves[i].1);
+            let result = find_win(&mut matrix.available_moves[i].1, past_matrices);
             if result.is_none() {
                 continue;
             } else {
