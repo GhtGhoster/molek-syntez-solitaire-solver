@@ -423,34 +423,44 @@ impl Move {
 fn main() {
     // TODO:
     // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
-    // - automate the new game repetition process, if no short enough solution can be found, just new game it
 
-    let mut matrix = Matrix::from_screen();
+    // manual gameplay / testing purposes
     // let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
-    
-    // print_matrix(&matrix);
-    let mut winners: Vec<Matrix> = vec![];
-    let mut past_matrices: HashSet<Matrix> = HashSet::new();
-    while past_matrices.len() < PAST_LIMIT {
-        if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
-            winners.push(winner);
-        }
-    }
-    if winners.is_empty() {
-        println!("No winzies :c");
-    } else {
-        winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
-        println!("Bestest winner: {}", winners[0].past_moves.len());
-        execute_moves(&mut matrix, &winners[0].past_moves);
-    }
-
     // gameplay_loop(&mut matrix);
+    
+    loop_wins(3);
 }
 
-fn loop_wins() {
-    loop {
-        // focus window, click new game, wait
+fn loop_wins(target_wins: usize) {
+    let mut enigo = Enigo::new();
+    let mut iter_count = 0;
+    while iter_count < target_wins {
+        // focus window
+        enigo.mouse_move_to(
+            1920 + OFFSET_H - SPACE_H,
+            OFFSET_V - SPACE_V,
+        );
+        sleep(Duration::from_millis(100));
+        enigo.mouse_down(enigo::MouseButton::Left);
+        sleep(Duration::from_millis(50));
+        enigo.mouse_up(enigo::MouseButton::Left);
+        sleep(Duration::from_millis(100));
+
+        // click new game
+        enigo.mouse_move_to(
+            1920 + (1920/2),
+            1080 - 40,
+        );
+        sleep(Duration::from_millis(100));
+        enigo.mouse_down(enigo::MouseButton::Left);
+        sleep(Duration::from_millis(50));
+        enigo.mouse_up(enigo::MouseButton::Left);
+        
+        // wait for game to be set up
+        sleep(Duration::from_millis(5000));
+
+        // find, optimize, and execute solutions
         let mut matrix = Matrix::from_screen();
         
         let mut winners: Vec<Matrix> = vec![];
@@ -466,13 +476,14 @@ fn loop_wins() {
                 continue;
             }
             execute_moves(&mut matrix, &winners[0].past_moves);
+            iter_count += 1;
         }
     }
 }
 
 #[allow(dead_code)]
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
-    let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
+    // let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
     // println!("Estimated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
     // let mut buf = String::new();
     // io::stdin().read_line(&mut buf).unwrap();
