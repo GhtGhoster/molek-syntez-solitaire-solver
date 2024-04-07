@@ -6,6 +6,14 @@ Such a me mistake. Anyway, next I'll see how hard/easy it is to grab screenshots
 
 Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
 
+## Requirements
+I only ran this on linux so that's what I'm gonna list. TL;DR:
+
+`apt-get install libxcb1 libxrandr2 libdbus-1-3 libxdo-dev`
+
+`libxcb1`, `libxrandr2`, `libdbus-1-3` are for screenshots, `libxdo-dev` is for enigo (robot-like mouse control)
+
+
 ## License
 
 Licensed under either of

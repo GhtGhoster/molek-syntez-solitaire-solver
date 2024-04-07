@@ -1,8 +1,18 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, io};
 use colored::Colorize;
 use rand::{thread_rng, Rng};
+use screenshots::{image::{io::Reader, GenericImageView, ImageBuffer}, Screen};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+const BOX_WIDTH: u32 = 22;
+const BOX_HEIGHT: u32 = 18;
+const OFFSET_H: i32 = 488;
+const OFFSET_V: i32 = 298;
+const SPACE_H: i32 = 652 - OFFSET_H;
+const SPACE_V: i32 = 330 - OFFSET_V;
+
+#[derive(Clone, Copy, PartialEq, Debug, EnumIter)]
 enum Card {
     Tits = 8,
     King = 7,
@@ -117,6 +127,32 @@ impl Hash for Matrix {
 }
 
 impl Matrix {
+    fn from_screen() -> Matrix {
+        let mut matrix: Matrix = Default::default();
+
+        // grab the screen. This is specifically set up for my use-case
+        // aka 3 monitors at FHD, game running on middle monitor with whatever order I've set up
+        let screens = Screen::all().unwrap();
+        let screen = screens[0];
+
+        for x in 0..6 {
+            for y in 0..6 {
+                let image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>> = screen.capture_area(
+                    OFFSET_H + (x * SPACE_H),
+                    OFFSET_V + (y * SPACE_V),
+                    BOX_WIDTH,
+                    BOX_HEIGHT,
+                ).unwrap();
+                // image.save("test.png").unwrap();
+                // io::stdin().read_line(&mut String::new()).unwrap();
+                let card = detect_image(image);
+                matrix.stacks[x as usize].cards.push(card);
+            }
+        }
+
+        matrix
+    }
+
     #[allow(dead_code)]
     fn from_input() -> Matrix {
         let mut matrix: Matrix = Default::default();
@@ -361,17 +397,9 @@ impl Move {
 }
 
 fn main() {
-    // TODO:
-    // - copy matrix
-    // - matrix hash function
-    // - tree exploration
-    // - heuristics
-    //      - minimize cheating
-    //      - sort by most available moves (maybe cache those)
-    //      - account for reversible moves (and remove them, here cache would also be useful)
-
     #[allow(unused)]
-    let mut matrix = Matrix::random();
+    let mut matrix = Matrix::from_screen();
+    // let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
     
     print_matrix(&matrix);
@@ -487,4 +515,19 @@ fn parse_line(string: &String) -> Option<[Card; 6]> {
         }
     }
     Some(ret)
+}
+
+fn detect_image(image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>>) -> Card {
+    'card_loop: for card_type in Card::iter() {
+        let card_image = Reader::open(format!("assets/{}.png", card_type.to_char())).unwrap().decode().unwrap();
+        for x in 0..BOX_WIDTH {
+            for y in 0..BOX_HEIGHT {
+                if &card_image.get_pixel(x, y) != image.get_pixel(x, y) {
+                    continue 'card_loop;
+                }
+            }
+        }
+        return card_type;
+    }
+    panic!();
 }
