@@ -1,5 +1,6 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, io};
+use std::{collections::HashSet, fmt::Display, hash::Hash, io, thread::sleep, time::Duration};
 use colored::Colorize;
+use enigo::{Enigo, MouseControllable};
 use rand::{thread_rng, Rng};
 use screenshots::{image::{io::Reader, GenericImageView, ImageBuffer}, Screen};
 use strum::IntoEnumIterator;
@@ -397,19 +398,72 @@ impl Move {
 }
 
 fn main() {
-    #[allow(unused)]
+    // TODO:
+    // - get a better heuristic, the end-game is atrocious due to most moves being preferred
+    // - find more solutions, pick the shortest ones
+    // - automate the new game repetition process
+
     let mut matrix = Matrix::from_screen();
     // let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
     
     print_matrix(&matrix);
     let mut past_matrices: HashSet<Matrix> = HashSet::new();
-    let winner = find_win(&mut matrix, &mut past_matrices);
-    for mov in winner.unwrap().past_moves {
-        println!("{mov:?}");
-    }
+    let winner = find_win(&mut matrix, &mut past_matrices).unwrap();
+    execute_moves(&mut matrix, &winner.past_moves);
 
     // gameplay_loop(&mut matrix);
+}
+
+fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
+    let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
+    println!("Esitmated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf).unwrap();
+    if buf.trim() == "n".to_string() {
+        return;
+    }
+
+    let mut enigo = Enigo::new();
+
+    // focus window
+    enigo.mouse_move_to(
+        1920 + OFFSET_H,
+        OFFSET_V,
+    );
+    sleep(Duration::from_millis(100));
+    enigo.mouse_down(enigo::MouseButton::Left);
+    sleep(Duration::from_millis(50));
+    enigo.mouse_up(enigo::MouseButton::Left);
+    sleep(Duration::from_millis(100));
+
+    for mov in moves {
+        println!("Clicking {mov:?}");
+
+        let y_from = matrix.stacks[mov.from].cards.len() - mov.count;
+        enigo.mouse_move_to(
+            1920 + OFFSET_H + (mov.from as i32 * SPACE_H),
+            OFFSET_V + (y_from.max(0) as i32 * SPACE_V),
+        );
+        enigo.mouse_down(enigo::MouseButton::Left);
+        sleep(Duration::from_millis(50));
+        enigo.mouse_up(enigo::MouseButton::Left);
+
+        sleep(Duration::from_millis(50));
+
+        let y_to = (matrix.stacks[mov.to].cards.len() as i32 - 1).max(0) as usize;
+        enigo.mouse_move_to(
+            1920 + OFFSET_H + (mov.to as i32 * SPACE_H),
+            OFFSET_V + (y_to as i32 * SPACE_V),
+        );
+        enigo.mouse_down(enigo::MouseButton::Left);
+        sleep(Duration::from_millis(50));
+        enigo.mouse_up(enigo::MouseButton::Left);
+
+        sleep(Duration::from_millis(100));
+
+        matrix.move_stack(*mov);
+    }
 }
 
 #[allow(dead_code)]
