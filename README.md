@@ -4,6 +4,24 @@ So far this is just a basic playable command line version of the solitaire.
 It actually works now, there were just some oversights that caused infinite loops but the concept was correct.
 Such a me mistake. Anyway, next I'll see how hard/easy it is to grab screenshots, determine positions, emulate clicks, etc.
 
+Me trying to make more involved heuristics on anything but my first attempt also seems doomed to failure.
+I tried this approach to calculate the score of a stack and then summing them to get the score of a matrix:
+
+```rust
+if self.collapsed {
+    return 20
+} else if self.cheated {
+    return 0;
+} else if self.cards.is_empty() {
+    return 20;
+} else {
+    return self.highest_orderly_count() + self.cards.len();
+}
+```
+
+This naturally led to even poorer performance, so I reverted this and instead decided to focus
+on finding multiple solutions and shortening the existing ones.
+
 Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
 
 ## Requirements

@@ -6,12 +6,16 @@ use screenshots::{image::{io::Reader, GenericImageView, ImageBuffer}, Screen};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+#[allow(dead_code)]
 const BOX_WIDTH: u32 = 22;
+#[allow(dead_code)]
 const BOX_HEIGHT: u32 = 18;
 const OFFSET_H: i32 = 488;
 const OFFSET_V: i32 = 298;
 const SPACE_H: i32 = 652 - OFFSET_H;
 const SPACE_V: i32 = 330 - OFFSET_V;
+
+const STEP_LIMIT: usize = 2000;
 
 #[derive(Clone, Copy, PartialEq, Debug, EnumIter)]
 enum Card {
@@ -55,6 +59,21 @@ impl Card {
             Card::Six => '6',
         };
         character
+    }
+    
+    fn from_image(image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>>) -> Card {
+        'card_loop: for card_type in Card::iter() {
+            let card_image = Reader::open(format!("assets/{}.png", card_type.to_char())).unwrap().decode().unwrap();
+            for x in 0..BOX_WIDTH {
+                for y in 0..BOX_HEIGHT {
+                    if &card_image.get_pixel(x, y) != image.get_pixel(x, y) {
+                        continue 'card_loop;
+                    }
+                }
+            }
+            return card_type;
+        }
+        panic!();
     }
 }
 
@@ -128,6 +147,7 @@ impl Hash for Matrix {
 }
 
 impl Matrix {
+    #[allow(dead_code)]
     fn from_screen() -> Matrix {
         let mut matrix: Matrix = Default::default();
 
@@ -146,7 +166,7 @@ impl Matrix {
                 ).unwrap();
                 // image.save("test.png").unwrap();
                 // io::stdin().read_line(&mut String::new()).unwrap();
-                let card = detect_image(image);
+                let card = Card::from_image(image);
                 matrix.stacks[x as usize].cards.push(card);
             }
         }
@@ -362,6 +382,7 @@ impl Matrix {
             .iter()
             .map(|move_| (*move_, self.copy_after_move(*move_)))
             .collect();
+        // prioritize low move count
         self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
     }
 
@@ -399,22 +420,28 @@ impl Move {
 
 fn main() {
     // TODO:
-    // - get a better heuristic, the end-game is atrocious due to most moves being preferred
     // - find more solutions, pick the shortest ones
-    // - automate the new game repetition process
+    // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
+    // - automate the new game repetition process, if no short enough solution can be found, just new game it
 
-    let mut matrix = Matrix::from_screen();
-    // let mut matrix = Matrix::random();
+    // let mut matrix = Matrix::from_screen();
+    let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
     
-    print_matrix(&matrix);
+    // print_matrix(&matrix);
     let mut past_matrices: HashSet<Matrix> = HashSet::new();
-    let winner = find_win(&mut matrix, &mut past_matrices).unwrap();
-    execute_moves(&mut matrix, &winner.past_moves);
+    if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
+        println!("Moves: {}", winner.past_moves.len());
+        // execute_moves(&mut matrix, &winner.past_moves);
+    } else {
+        println!("Search over {STEP_LIMIT}");
+    }
+    println!("Past matrices: {}", past_matrices.len());
 
     // gameplay_loop(&mut matrix);
 }
 
+#[allow(dead_code)]
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
     println!("Esitmated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
@@ -469,6 +496,9 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
 #[allow(dead_code)]
 fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
+    if past_matrices.len() > 20000 {
+        return None;
+    }
 
     matrix.save_moves();
     matrix.prune(&past_matrices);
@@ -480,6 +510,9 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<
             return None;
         }
     } else {
+        if matrix.past_moves.len() > STEP_LIMIT {
+            return None;
+        }
         for i in 0..matrix.available_moves.len() {
             let result = find_win(&mut matrix.available_moves[i].1, past_matrices);
             if result.is_none() {
@@ -569,19 +602,4 @@ fn parse_line(string: &String) -> Option<[Card; 6]> {
         }
     }
     Some(ret)
-}
-
-fn detect_image(image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>>) -> Card {
-    'card_loop: for card_type in Card::iter() {
-        let card_image = Reader::open(format!("assets/{}.png", card_type.to_char())).unwrap().decode().unwrap();
-        for x in 0..BOX_WIDTH {
-            for y in 0..BOX_HEIGHT {
-                if &card_image.get_pixel(x, y) != image.get_pixel(x, y) {
-                    continue 'card_loop;
-                }
-            }
-        }
-        return card_type;
-    }
-    panic!();
 }
