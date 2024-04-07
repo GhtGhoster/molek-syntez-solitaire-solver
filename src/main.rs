@@ -63,7 +63,7 @@ impl Card {
         character
     }
     
-    fn from_image(image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>>) -> Card {
+    fn from_image(image: ImageBuffer<screenshots::image::Rgba<u8>, Vec<u8>>) -> Option<Card> {
         'card_loop: for card_type in Card::iter() {
             let card_image = Reader::open(format!("assets/{}.png", card_type.to_char())).unwrap().decode().unwrap();
             for x in 0..BOX_WIDTH {
@@ -73,9 +73,9 @@ impl Card {
                     }
                 }
             }
-            return card_type;
+            return Some(card_type);
         }
-        panic!();
+        None
     }
 }
 
@@ -150,7 +150,7 @@ impl Hash for Matrix {
 
 impl Matrix {
     #[allow(dead_code)]
-    fn from_screen() -> Matrix {
+    fn from_screen() -> Option<Matrix> {
         let mut matrix: Matrix = Default::default();
 
         // grab the screen. This is specifically set up for my use-case
@@ -166,14 +166,15 @@ impl Matrix {
                     BOX_WIDTH,
                     BOX_HEIGHT,
                 ).unwrap();
-                // image.save("test.png").unwrap();
-                // io::stdin().read_line(&mut String::new()).unwrap();
-                let card = Card::from_image(image);
-                matrix.stacks[x as usize].cards.push(card);
+                if let Some(card) = Card::from_image(image) {
+                    matrix.stacks[x as usize].cards.push(card);
+                } else {
+                    return None
+                }
             }
         }
 
-        matrix
+        Some(matrix)
     }
 
     #[allow(dead_code)]
@@ -238,8 +239,8 @@ impl Matrix {
         matrix
     }
 
-    fn check_validity(&self, move_: Move) -> MoveValidity {
-        let Move{from, to, count} = move_;
+    fn check_validity(&self, mov: Move) -> MoveValidity {
+        let Move{from, to, count} = mov;
         if
             self.stacks[to].collapsed ||
             self.stacks[from].collapsed ||
@@ -271,11 +272,11 @@ impl Matrix {
         return MoveValidity::Invalid;
     }
 
-    fn move_stack(&mut self, move_: Move) -> bool {
-        let Move{from, to, count} = move_;
+    fn move_stack(&mut self, mov: Move) -> bool {
+        let Move{from, to, count} = mov;
 
         // validity check
-        let validity: MoveValidity = self.check_validity(move_);
+        let validity: MoveValidity = self.check_validity(mov);
         if validity == MoveValidity::Invalid {
             return false;
         }
@@ -326,9 +327,9 @@ impl Matrix {
             let highest_orderly_count = self.stacks[from].highest_orderly_count();
             for count in 1..=highest_orderly_count {
                 for to in 0..6 {
-                    let move_: Move = Move {from, to , count};
-                    if self.check_validity(move_) != MoveValidity::Invalid {
-                        ret.push(move_);
+                    let mov: Move = Move {from, to , count};
+                    if self.check_validity(mov) != MoveValidity::Invalid {
+                        ret.push(mov);
                     }
                 }
             }
@@ -355,10 +356,10 @@ impl Matrix {
         matrix
     }
 
-    fn copy_after_move(&self, move_: Move) -> Matrix {
+    fn copy_after_move(&self, mov: Move) -> Matrix {
         let mut matrix: Matrix = self.copy();
-        matrix.move_stack(move_);
-        matrix.past_moves.push(move_);
+        matrix.move_stack(mov);
+        matrix.past_moves.push(mov);
         matrix
     }
 
@@ -378,11 +379,12 @@ impl Matrix {
         ret
     }
 
-    fn save_moves(&mut self) {
+    fn save_moves(&mut self, allow_cheats: bool) {
         self.available_moves = self
             .valid_moves()
             .iter()
-            .map(|move_| (*move_, self.copy_after_move(*move_)))
+            .map(|mov| (*mov, self.copy_after_move(*mov)))
+            .filter(|(mov, _)| allow_cheats || self.check_validity(*mov) != MoveValidity::ValidCheat)
             .collect();
         // prioritize low move count
         self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
@@ -423,16 +425,31 @@ impl Move {
 fn main() {
     // TODO:
     // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
+    // - add CLI
 
     // manual gameplay / testing purposes
     // let mut matrix = Matrix::random();
     // let mut matrix = Matrix::from_input();
     // gameplay_loop(&mut matrix);
     
-    loop_wins(3);
+    loop_wins(2, true);
 }
 
-fn loop_wins(target_wins: usize) {
+fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>) {
+    // construct a list of (matrix, moves left) for each past move in solution for solution in solutions
+    // construct a list of (matrix, moves_taken) for each past move in solution
+    // for each matrix in that list, check if it can be achieved faster with another moveset from solutions
+    // this will cut out redundant slack in the middle, stitch their movesets together
+    // wait a minute I could use past_matrices for this, that will show past moves as well as their matrices
+    // I'd have to mod the code that finds wins to not use set but a vec instead
+    // the check for .contains() should still be the same and that way I get ALL the matrices and their pasts
+
+    // depending on how much time this shit takes:
+    // I can also check each matrix for undiscovered moves x depth down
+    // the more stacks that are collapsed the deeper I think I can afford to go
+}
+
+fn loop_wins(target_wins: usize, allow_cheats: bool) {
     let mut enigo = Enigo::new();
     let mut iter_count = 0;
     while iter_count < target_wins {
@@ -458,24 +475,41 @@ fn loop_wins(target_wins: usize) {
         enigo.mouse_up(enigo::MouseButton::Left);
         
         // wait for game to be set up
-        sleep(Duration::from_millis(5000));
-
-        // find, optimize, and execute solutions
-        let mut matrix = Matrix::from_screen();
+        let mut matrix_option = Matrix::from_screen();
+        while matrix_option.is_none() {
+            sleep(Duration::from_millis(1500));
+            matrix_option = Matrix::from_screen();
+        }
+        let mut matrix = matrix_option.unwrap();
+        let start_matrix = matrix.copy();
         
+        // find solutions
         let mut winners: Vec<Matrix> = vec![];
         let mut past_matrices: HashSet<Matrix> = HashSet::new();
         while past_matrices.len() < PAST_LIMIT {
-            if let Some(winner) = find_win(&mut matrix, &mut past_matrices) {
+            if let Some(winner) = find_win(&mut matrix, &mut past_matrices, allow_cheats) {
                 winners.push(winner);
+                if !allow_cheats {
+                    break;
+                }
+            } else {
+                break
             }
+
         }
+
+        // TODO:
+        // optimize solution(s)?
+        optimize_solutions(start_matrix, &winners);
+
+        // execute best solution
         if !winners.is_empty() {
             winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
-            if winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
+            if allow_cheats && winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
                 continue;
             }
-            execute_moves(&mut matrix, &winners[0].past_moves);
+            // execute_moves(&mut matrix, &winners[0].past_moves);
+            println!("Shortest win found: {}", winners[0].past_moves.len());
             iter_count += 1;
         }
     }
@@ -483,14 +517,6 @@ fn loop_wins(target_wins: usize) {
 
 #[allow(dead_code)]
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
-    // let eta = moves.len() * (100 + 50 + 50 + 50) as usize;
-    // println!("Estimated time: {} seconds, continue? [(y)/n]", eta as f32 / 1000.0);
-    // let mut buf = String::new();
-    // io::stdin().read_line(&mut buf).unwrap();
-    // if buf.trim() == "n".to_string() {
-    //     return;
-    // }
-
     let mut enigo = Enigo::new();
 
     // focus window but don't pick a card if window already focused
@@ -532,13 +558,13 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
 }
 
 #[allow(dead_code)]
-fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<Matrix> {
+fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_cheats: bool) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
-    if past_matrices.len() > PAST_LIMIT {
+    if allow_cheats && past_matrices.len() > PAST_LIMIT {
         return None;
     }
 
-    matrix.save_moves();
+    matrix.save_moves(allow_cheats);
     matrix.prune(&past_matrices);
 
     if matrix.available_moves.is_empty() {
@@ -548,11 +574,11 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>) -> Option<
             return None;
         }
     } else {
-        if matrix.past_moves.len() > STEP_LIMIT {
+        if allow_cheats && matrix.past_moves.len() > STEP_LIMIT {
             return None;
         }
         for i in 0..matrix.available_moves.len() {
-            let result = find_win(&mut matrix.available_moves[i].1, past_matrices);
+            let result = find_win(&mut matrix.available_moves[i].1, past_matrices, allow_cheats);
             if result.is_none() {
                 continue;
             } else {
@@ -568,9 +594,9 @@ fn gameplay_loop(matrix: &mut Matrix) {
     println!("{:?}", matrix.valid_moves());
     while !matrix.is_finished() {
         print_matrix(&matrix);
-        let move_: Move = Move::from_input();
-        if matrix.move_stack(move_) {
-            println!("You done did good moved {} cards [{}] -> [{}]", move_.count, move_.from, move_.to);
+        let mov: Move = Move::from_input();
+        if matrix.move_stack(mov) {
+            println!("You done did good moved {} cards [{}] -> [{}]", mov.count, mov.from, mov.to);
         } else {
             println!("You done fucked goofed mister goober\n");
         }
