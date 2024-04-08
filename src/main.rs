@@ -1,5 +1,4 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, io, thread::sleep, time::Duration};
-use colored::Colorize;
+use std::{collections::HashSet, fmt::Display, hash::Hash, thread::sleep, time::{Duration, Instant}};
 use enigo::{Enigo, MouseControllable};
 use rand::{thread_rng, Rng};
 use screenshots::{image::{io::Reader, GenericImageView, ImageBuffer}, Screen};
@@ -178,48 +177,6 @@ impl Matrix {
     }
 
     #[allow(dead_code)]
-    fn from_input() -> Matrix {
-        let mut matrix: Matrix = Default::default();
-    
-        for _ in 0..6 {
-            // handle and parse input
-            let mut buffer = String::new();
-            io::stdin().read_line(&mut buffer).unwrap();
-            let mut parsed_line: Option<[Card; 6]> = parse_line(&buffer);
-            buffer.clear();
-    
-            while parsed_line == Option::None {
-                println!("Incorrect format, try again.");
-                io::stdin().read_line(&mut buffer).unwrap();
-                parsed_line = parse_line(&buffer);
-                buffer.clear();
-            }
-    
-            // structure input
-            for (i, card) in parsed_line.unwrap().iter().enumerate() {
-                matrix.stacks[i].cards.push(*card);
-            }
-        }
-
-        // check input validity
-        // Inefficient and potentially unsafe due to user-input based depth recursion, don't care tho.
-        let mut type_count_array: [usize; 9] = [0; 9];
-        for stack in &matrix.stacks {
-            for card in &stack.cards {
-                type_count_array[*card as usize] += 1;
-            }
-        }
-        for i in 0..9 {
-            if type_count_array[i] != 4 {
-                println!("Wrong input parity, try again:");
-                return Matrix::from_input();
-            }
-        }
-
-        matrix
-    }
-
-    #[allow(dead_code)]
     fn random() -> Matrix {
         let mut matrix: Matrix = Default::default();
         let mut matrix_index = 0;
@@ -316,10 +273,6 @@ impl Matrix {
         collapsed_count == 4
     }
 
-    fn is_finished(&self) -> bool {
-        self.valid_moves().is_empty()
-    }
-
     fn valid_moves(&self) -> Vec<Move> {
         let mut ret = vec![];
 
@@ -390,7 +343,7 @@ impl Matrix {
         self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
     }
 
-    fn prune(&mut self, past_matrices: &HashSet<Matrix>) {
+    fn prune(&mut self, past_matrices: &mut HashSet<Matrix>) {
         for i in (0..self.available_moves.len()).rev() {
             if past_matrices.contains(&self.available_moves[i].1) {
                 self.available_moves.remove(i);
@@ -406,36 +359,32 @@ struct Move {
     count: usize,
 }
 
-impl Move {
-    fn from_input() -> Move {
-        let mut buffer: String = String::new();
-        io::stdin().read_line(&mut buffer).unwrap();
-        let tokens: Vec<&str> = buffer.trim().split(" ").collect();
-        let from: usize = tokens[0].parse().unwrap();
-        let to: usize = tokens[1].parse().unwrap();
-        let count: usize = tokens[2].parse().unwrap();
-        Move {
-            from,
-            to,
-            count
-        }
-    }
-}
-
 fn main() {
     // TODO:
     // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
     // - add CLI
 
-    // manual gameplay / testing purposes
-    // let mut matrix = Matrix::random();
-    // let mut matrix = Matrix::from_input();
-    // gameplay_loop(&mut matrix);
-    
-    loop_wins(2, true);
+    let start_time = Instant::now();
+
+    let mut matrix = Matrix::random();
+    let start_matrix = matrix.copy();
+    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+    let mut winners: Vec<Matrix> = vec![];
+    while past_matrices.len() < PAST_LIMIT {
+        if let Some(winner) = find_win(&mut matrix, &mut past_matrices, true) {
+            winners.push(winner);
+        } else {
+            break
+        }
+    }
+    optimize_solutions(start_matrix, &winners, &past_matrices);
+
+    loop_wins(0, true);
+
+    println!("Finished after {} seconds", start_time.elapsed().as_secs_f32());
 }
 
-fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>) {
+fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>, past_matrices: &HashSet<Matrix>) {
     // construct a list of (matrix, moves left) for each past move in solution for solution in solutions
     // construct a list of (matrix, moves_taken) for each past move in solution
     // for each matrix in that list, check if it can be achieved faster with another moveset from solutions
@@ -495,12 +444,11 @@ fn loop_wins(target_wins: usize, allow_cheats: bool) {
             } else {
                 break
             }
-
         }
 
         // TODO:
         // optimize solution(s)?
-        optimize_solutions(start_matrix, &winners);
+        optimize_solutions(start_matrix, &winners, &past_matrices);
 
         // execute best solution
         if !winners.is_empty() {
@@ -565,7 +513,7 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_chea
     }
 
     matrix.save_moves(allow_cheats);
-    matrix.prune(&past_matrices);
+    matrix.prune(past_matrices);
 
     if matrix.available_moves.is_empty() {
         if matrix.is_win() {
@@ -587,83 +535,4 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_chea
         }
     }
     None
-}
-
-#[allow(dead_code)]
-fn gameplay_loop(matrix: &mut Matrix) {
-    println!("{:?}", matrix.valid_moves());
-    while !matrix.is_finished() {
-        print_matrix(&matrix);
-        let mov: Move = Move::from_input();
-        if matrix.move_stack(mov) {
-            println!("You done did good moved {} cards [{}] -> [{}]", mov.count, mov.from, mov.to);
-        } else {
-            println!("You done fucked goofed mister goober\n");
-        }
-    }
-    if matrix.is_win() {
-        println!("You's a winzies!!1!:D");
-    } else {
-        println!("You loozies :,ccc");
-    }
-}
-
-#[allow(dead_code)]
-fn print_matrix(matrix: &Matrix) {
-    println!("======");
-    let mut row = 0;
-    loop {
-        let mut should_break = true;
-        for i in 0..6 {
-            let stack = &matrix.stacks[i];
-            if !stack.collapsed {
-                if stack.cards.len() > row {
-                    should_break = false;
-                    let cheated: bool = stack.cards.len() == row + 1 && stack.cheated;
-                    print!(
-                        "{}",
-                        if cheated {
-                            format!("{}", stack.cards[row]).bold().blue()
-                        } else {
-                            format!("{}", stack.cards[row]).bold().clear()
-                        }
-                    );
-                } else {
-                    print!(" ");
-                }
-            } else {
-                if row == 0 {
-                    print!("{}", "C".bold().red());
-                    should_break = false;
-                } else {
-                    print!(" ");
-                }
-            }
-        }
-        row += 1;
-        println!();
-        if should_break {
-            break;
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn parse_line(string: &String) -> Option<[Card; 6]> {
-    let mut ret: [Card; 6] = [Card::Six; 6];
-    let tmp = string.trim();
-    if tmp.len() != 6 {
-        return None;
-    }
-    for (i, character) in tmp.chars().enumerate() {
-        match Card::from_char(character) {
-            Some(symbol) => {
-                ret[i] = symbol;
-            }
-            None => {
-                return None;
-            }
-        }
-    }
-    Some(ret)
 }
