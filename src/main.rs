@@ -343,7 +343,7 @@ impl Matrix {
         self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
     }
 
-    fn prune(&mut self, past_matrices: &mut HashSet<Matrix>) {
+    fn prune(&mut self, past_matrices: &HashSet<Matrix>) {
         for i in (0..self.available_moves.len()).rev() {
             if past_matrices.contains(&self.available_moves[i].1) {
                 self.available_moves.remove(i);
@@ -368,13 +368,13 @@ fn main() {
 
     let mut matrix = Matrix::random();
     let start_matrix = matrix.copy();
-    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+
     let mut winners: Vec<Matrix> = vec![];
+    let mut past_matrices: HashSet<Matrix> = HashSet::new();
     while past_matrices.len() < PAST_LIMIT {
         if let Some(winner) = find_win(&mut matrix, &mut past_matrices, true) {
+            println!("Found winner: {}", winner.past_moves.len());
             winners.push(winner);
-        } else {
-            break
         }
     }
     optimize_solutions(start_matrix, &winners, &past_matrices);
@@ -385,17 +385,20 @@ fn main() {
 }
 
 fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>, past_matrices: &HashSet<Matrix>) {
-    // construct a list of (matrix, moves left) for each past move in solution for solution in solutions
-    // construct a list of (matrix, moves_taken) for each past move in solution
-    // for each matrix in that list, check if it can be achieved faster with another moveset from solutions
-    // this will cut out redundant slack in the middle, stitch their movesets together
-    // wait a minute I could use past_matrices for this, that will show past moves as well as their matrices
-    // I'd have to mod the code that finds wins to not use set but a vec instead
-    // the check for .contains() should still be the same and that way I get ALL the matrices and their pasts
+    for winner_matrix in winner_matrices {
+        // reconstruct the matrices on the way to a winning matrix
+        let mut winner_matrix_history: Vec<Matrix> = vec![];
+        let mut last_matrix = start_matrix.copy();
+        for mov in &winner_matrix.past_moves {
+            last_matrix = last_matrix.copy_after_move(*mov);
+            winner_matrix_history.push(last_matrix.copy());
+        }
+    }
 
     // depending on how much time this shit takes:
     // I can also check each matrix for undiscovered moves x depth down
     // the more stacks that are collapsed the deeper I think I can afford to go
+    // prune() also saves all matrices 
 }
 
 fn loop_wins(target_wins: usize, allow_cheats: bool) {
@@ -441,8 +444,6 @@ fn loop_wins(target_wins: usize, allow_cheats: bool) {
                 if !allow_cheats {
                     break;
                 }
-            } else {
-                break
             }
         }
 
@@ -513,7 +514,7 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_chea
     }
 
     matrix.save_moves(allow_cheats);
-    matrix.prune(past_matrices);
+    matrix.prune(&past_matrices);
 
     if matrix.available_moves.is_empty() {
         if matrix.is_win() {
