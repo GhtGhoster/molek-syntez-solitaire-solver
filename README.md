@@ -4,8 +4,26 @@ Automated solution finder and executioner for MOLEK-SYNTEZ Solitaire minigame.
 No command line interface is in place yet, you'll have to edit the code manually.
 
 The bot works by finding any solutions by navigating the game state tree,
-preferring lowest available moves counts.T his method is used to find several solutions
-which are then optimized by limited depth full tree exploration around the winning paths.
+using the following heuristic (lower score preferred):
+```rust
+let mut score = 40;
+
+for stack in &self.stacks {
+    if stack.collapsed {
+        ret -= 10
+    } else {
+        ret -= stack.highest_orderly_count()
+    }
+}
+
+return score;
+```
+
+This method is used to find several solutions which are then optimized by
+limited depth full tree exploration around the winning paths.
+This has become pretty much redundant as since I improved the heuristic,
+the optimization search takes longer than the moves it saves,
+but I'm keeping it for testing more possible improvements later.
 
 Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
 
@@ -25,6 +43,12 @@ Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
       return self.highest_orderly_count() + self.cards.len();
   }
   ```
+
+## What I've learned
+
+- That when I sometimes play fast and loose, I miss minor details,
+  making me believe a more major fault is present.
+- That I gave up way too early when I was really, really close to the correct heuristic.
 
 ## Requirements
 

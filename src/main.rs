@@ -1,22 +1,21 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, thread::sleep, time::{Duration, Instant}};
 use enigo::{Enigo, MouseControllable};
-use rand::{thread_rng, Rng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use screenshots::{image::{io::Reader, GenericImageView, ImageBuffer}, Screen};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[allow(dead_code)]
 const BOX_WIDTH: u32 = 22;
-#[allow(dead_code)]
 const BOX_HEIGHT: u32 = 18;
 const OFFSET_H: i32 = 488;
 const OFFSET_V: i32 = 298;
 const SPACE_H: i32 = 652 - OFFSET_H;
 const SPACE_V: i32 = 330 - OFFSET_V;
 
+// strike a balance between fast, non-breaking, not missing a solve too often
 const STEP_LIMIT: usize = 2000;
 const PAST_LIMIT: usize = 20000;
-const ACCEPTABLE_SOLUTION_LEN: usize = 400;
+const ACCEPTABLE_SOLUTION_LEN: usize = 100;
 
 #[derive(Clone, Copy, PartialEq, Debug, EnumIter)]
 enum Card {
@@ -148,7 +147,6 @@ impl Hash for Matrix {
 }
 
 impl Matrix {
-    #[allow(dead_code)]
     fn from_screen() -> Option<Matrix> {
         let mut matrix: Matrix = Default::default();
 
@@ -176,11 +174,10 @@ impl Matrix {
         Some(matrix)
     }
 
-    #[allow(dead_code)]
-    fn random() -> Matrix {
+    fn random(rng: &mut impl Rng) -> Matrix { // rng: &mut Rng
         let mut matrix: Matrix = Default::default();
         let mut matrix_index = 0;
-        let mut rng = thread_rng();
+        // let mut rng = SmallRng::seed_from_u64(1337);
 
         for _ in 0..4 {
             let mut chars = "67890VDKT".to_string();
@@ -332,6 +329,23 @@ impl Matrix {
         ret
     }
 
+    // lower score is preferred
+    fn heuristic_score(&self) -> usize {
+        // lets try counting inaccessible and non-orderly cards
+        // return self.valid_moves().len();
+        let mut ret = 40;
+
+        for stack in &self.stacks {
+            if stack.collapsed {
+                ret -= 10
+            } else {
+                ret -= stack.highest_orderly_count()
+            }
+        }
+
+        ret
+    }
+
     fn save_moves(&mut self, allow_cheats: bool) {
         self.available_moves = self
             .valid_moves()
@@ -340,7 +354,7 @@ impl Matrix {
             .filter(|(mov, _)| allow_cheats || self.check_validity(*mov) != MoveValidity::ValidCheat)
             .collect();
         // prioritize low move count
-        self.available_moves.sort_by(|(_, a), (_, b)| a.valid_moves().len().cmp(&b.valid_moves().len()));
+        self.available_moves.sort_by(|(_, a), (_, b)| a.heuristic_score().cmp(&b.heuristic_score()));
     }
 
     fn prune(&mut self, past_matrices: &HashSet<Matrix>) {
@@ -375,7 +389,8 @@ fn main() {
     //      - if winnable_state.moves_left + current_matrix.past_moves < max_len: return it
     //      - need a structure to hold winnable states and their moves_left
     //      - brute_force (and by extension optimize_solution) would need to return Vec<Move> instead
-    // - might wanna try messing with the heuristic again, highest orderly count + collapsed + empty, don't care about cheated slots
+    // - try to find a solution with the old heuristic when nothing is found
+    // - try to optimize the solution if it's over acceptable limit
     // - add CLI
 
     let start_time = Instant::now();
@@ -396,12 +411,13 @@ fn main() {
     //     optimize_solutions(start_matrix, &winners);
     // }
 
-    loop_wins(3, true);
+    loop_wins(5, true, false);
 
     println!("Finished after {} seconds", start_time.elapsed().as_secs_f32());
 }
 
 // This expects sorted winner matrices
+#[allow(dead_code)]
 fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>) -> Matrix {
     let winner_matrices_past_matrices: Vec<Vec<Matrix>> = winner_matrices
         .iter()
@@ -418,7 +434,7 @@ fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>) -> Ma
             // TODO: prevent this from firing if it'd take too long (if the bruteforce depth is too big)
             let mut past_matrix = winner_matrix_past_matrices[i].copy();
             let brute_force_depth = best_matrix.past_moves.len() as isize - past_matrix.past_moves.len() as isize;
-            if brute_force_depth > 7 {break;} // brute_force could take too long, stick to 6 or 7 (max 7 or 8)
+            if brute_force_depth > 6 {break;} // brute_force could take too long, stick to 6 or 7 (max 7 or 8)
             if brute_force_depth < 0 {continue;} // brute_force would immediately end, save some performance
 
 
@@ -464,45 +480,61 @@ fn brute_force(matrix: &mut Matrix, max_len: usize, discovered_matrices: &mut Ha
     best_matrix_option
 }
 
-fn loop_wins(target_wins: usize, allow_cheats: bool) {
+fn loop_wins(target_wins: usize, allow_cheats: bool, dry_run: bool) {
+    let mut rng = SmallRng::seed_from_u64(1337);
     let mut enigo = Enigo::new();
     let mut iter_count = 0;
+    let mut matrix_option = if dry_run {
+        Matrix::from_screen()
+    } else {
+        None
+    };
     while iter_count < target_wins {
-        // focus window
-        enigo.mouse_move_to(
-            1920 + OFFSET_H - SPACE_H,
-            OFFSET_V - SPACE_V,
-        );
-        sleep(Duration::from_millis(100));
-        enigo.mouse_down(enigo::MouseButton::Left);
-        sleep(Duration::from_millis(50));
-        enigo.mouse_up(enigo::MouseButton::Left);
-        sleep(Duration::from_millis(100));
+        let mut matrix = if dry_run {
+            Matrix::random(&mut rng)
+        } else {
+            if let Some(matrix) = &matrix_option {
+                matrix.copy()
+            } else {
+                // focus window
+                enigo.mouse_move_to(
+                    1920 + OFFSET_H - SPACE_H,
+                    OFFSET_V - SPACE_V,
+                );
+                sleep(Duration::from_millis(100));
+                enigo.mouse_down(enigo::MouseButton::Left);
+                sleep(Duration::from_millis(50));
+                enigo.mouse_up(enigo::MouseButton::Left);
+                sleep(Duration::from_millis(100));
 
-        // click new game
-        enigo.mouse_move_to(
-            1920 + (1920/2),
-            1080 - 40,
-        );
-        sleep(Duration::from_millis(100));
-        enigo.mouse_down(enigo::MouseButton::Left);
-        sleep(Duration::from_millis(50));
-        enigo.mouse_up(enigo::MouseButton::Left);
-        
-        // wait for game to be set up
-        let mut matrix_option = Matrix::from_screen();
-        while matrix_option.is_none() {
-            sleep(Duration::from_millis(1500));
-            matrix_option = Matrix::from_screen();
-        }
-        let mut matrix = matrix_option.unwrap();
-        let start_matrix = matrix.copy();
+                // click new game
+                enigo.mouse_move_to(
+                    1920 + (1920/2),
+                    1080 - 40,
+                );
+                sleep(Duration::from_millis(100));
+                enigo.mouse_down(enigo::MouseButton::Left);
+                sleep(Duration::from_millis(50));
+                enigo.mouse_up(enigo::MouseButton::Left);
+                
+                // wait for game to be set up
+                let mut matrix_option = Matrix::from_screen();
+                while matrix_option.is_none() {
+                    sleep(Duration::from_millis(1500));
+                    matrix_option = Matrix::from_screen();
+                }
+                matrix_option.unwrap()
+            }
+        };
+        // made redundant by heuristic improvements, keeping for testing purposes
+        // let start_matrix = matrix.copy();
         
         // find solutions
         let mut winners: Vec<Matrix> = vec![];
         let mut past_matrices: HashSet<Matrix> = HashSet::new();
         while past_matrices.len() < PAST_LIMIT {
             if let Some(winner) = find_win(&mut matrix, &mut past_matrices, allow_cheats) {
+                // println!("Found solution: {} moves", winner.past_moves.len());
                 winners.push(winner);
                 if !allow_cheats {
                     break;
@@ -511,23 +543,35 @@ fn loop_wins(target_wins: usize, allow_cheats: bool) {
         }
         
         if winners.is_empty() {
+            println!("No solution found, reattempting...");
+            matrix_option = None;
             continue;
         }
         winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
 
         // find optimal solution, improve it
-        let winner = optimize_solutions(start_matrix, &winners);
+        // made redundant by heuristic improvements, keeping for testing purposes
+        // let winner = optimize_solutions(start_matrix, &winners);
+        // if dry_run {
+        //     println!("Optimized solution: {} moves", winner.past_moves.len());
+        // }
+
+        let winner = winners[0].copy();
 
         // execute best solution
         if allow_cheats && winner.past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
+            println!("Solution too long, over {} moves.", ACCEPTABLE_SOLUTION_LEN);
+            matrix_option = None;
             continue;
         }
-        execute_moves(&mut matrix, &winner.past_moves);
+        println!("Executing solution: {} moves", winner.past_moves.len());
+        if !dry_run {
+            execute_moves(&mut matrix, &winner.past_moves);
+        }
         iter_count += 1;
     }
 }
 
-#[allow(dead_code)]
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     let mut enigo = Enigo::new();
 
@@ -569,7 +613,6 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     }
 }
 
-#[allow(dead_code)]
 fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_cheats: bool) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
     if allow_cheats && past_matrices.len() > PAST_LIMIT {
