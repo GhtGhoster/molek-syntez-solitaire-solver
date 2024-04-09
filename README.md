@@ -2,12 +2,17 @@
 
 Automated solution finder and executioner for MOLEK-SYNTEZ Solitaire minigame.
 No command line interface is in place yet, you'll have to edit the code manually.
-The solutions are rather goofy, especially near the end, will work on that.
+
+The bot works by finding any solutions by navigating the game state tree,
+preferring lowest available moves counts.T his method is used to find several solutions
+which are then optimized by limited depth full tree exploration around the winning paths.
 
 Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
 
 ## Mistake history
-- My implementation of copying game states and passing past_matrices history was wrong, leading to loops and incorrect game states
+
+- My implementation of copying game states and passing past_matrices history was wrong,
+  leading to loops and incorrect game states
 - My heuristic score calculation was ineffective, reverted to preferring lowest move counts
   ```rust
   if self.collapsed {
@@ -22,11 +27,14 @@ Get the game on [steam](https://store.steampowered.com/app/1168880/MOLEKSYNTEZ/)
   ```
 
 ## Requirements
-I only ran this on linux so that's what I'm gonna list. TL;DR:
+
+I only ran this on linux so that's what I'm gonna list:
 
 `apt-get install libxcb1 libxrandr2 libdbus-1-3 libxdo-dev`
 
-`libxcb1`, `libxrandr2`, `libdbus-1-3` are for screenshots, `libxdo-dev` is for enigo (robot-like mouse control)
+`libxcb1`, `libxrandr2`, `libdbus-1-3` are for the `screenshots` crate
+
+`libxdo-dev` is for the `enigo`
 
 
 ## License

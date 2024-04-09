@@ -350,6 +350,16 @@ impl Matrix {
             }
         }
     }
+
+    fn past_matrices(&self, start_matrix: Matrix) -> Vec<Matrix> {
+        let mut ret: Vec<Matrix> = vec![];
+        let mut last_matrix = start_matrix.copy();
+        for mov in &self.past_moves {
+            last_matrix = last_matrix.copy_after_move(*mov);
+            ret.push(last_matrix.copy());
+        }
+        ret
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -361,44 +371,97 @@ struct Move {
 
 fn main() {
     // TODO:
-    // - improve found solutions via past matrices, cutting out middle parts (the end-game is atrocious due to most moves being preferred)
+    // - enable brute_force to also find "wins" by finding a winnable state
+    //      - if winnable_state.moves_left + current_matrix.past_moves < max_len: return it
+    //      - need a structure to hold winnable states and their moves_left
+    //      - brute_force (and by extension optimize_solution) would need to return Vec<Move> instead
+    // - might wanna try messing with the heuristic again, highest orderly count + collapsed + empty, don't care about cheated slots
     // - add CLI
 
     let start_time = Instant::now();
 
-    let mut matrix = Matrix::random();
-    let start_matrix = matrix.copy();
+    // let mut matrix = Matrix::random();
+    // let start_matrix = matrix.copy();
 
-    let mut winners: Vec<Matrix> = vec![];
-    let mut past_matrices: HashSet<Matrix> = HashSet::new();
-    while past_matrices.len() < PAST_LIMIT {
-        if let Some(winner) = find_win(&mut matrix, &mut past_matrices, true) {
-            println!("Found winner: {}", winner.past_moves.len());
-            winners.push(winner);
-        }
-    }
-    optimize_solutions(start_matrix, &winners, &past_matrices);
+    // let mut winners: Vec<Matrix> = vec![];
+    // let mut past_matrices: HashSet<Matrix> = HashSet::new();
+    // while past_matrices.len() < PAST_LIMIT {
+    //     if let Some(winner) = find_win(&mut matrix, &mut past_matrices, true) {
+    //         winners.push(winner);
+    //     }
+    // }
+    // if !winners.is_empty() {
+    //     winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
+    //     println!("Best before opti: {}", winners[0].past_moves.len());
+    //     optimize_solutions(start_matrix, &winners);
+    // }
 
-    loop_wins(0, true);
+    loop_wins(3, true);
 
     println!("Finished after {} seconds", start_time.elapsed().as_secs_f32());
 }
 
-fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>, past_matrices: &HashSet<Matrix>) {
-    for winner_matrix in winner_matrices {
-        // reconstruct the matrices on the way to a winning matrix
-        let mut winner_matrix_history: Vec<Matrix> = vec![];
-        let mut last_matrix = start_matrix.copy();
-        for mov in &winner_matrix.past_moves {
-            last_matrix = last_matrix.copy_after_move(*mov);
-            winner_matrix_history.push(last_matrix.copy());
+// This expects sorted winner matrices
+fn optimize_solutions(start_matrix: Matrix, winner_matrices: &Vec<Matrix>) -> Matrix {
+    let winner_matrices_past_matrices: Vec<Vec<Matrix>> = winner_matrices
+        .iter()
+        .map(|winner_matrix| {
+            winner_matrix.past_matrices(start_matrix.copy())
+        })
+        .collect();
+    let mut best_matrix = winner_matrices[0].copy();
+
+    let starting_cutoff = 2; // I could probably start way earlier, there's a lot of goofing near the end of almost every solve
+
+    for winner_matrix_past_matrices in winner_matrices_past_matrices {
+        for i in (0..winner_matrix_past_matrices.len()-starting_cutoff).rev() {
+            // TODO: prevent this from firing if it'd take too long (if the bruteforce depth is too big)
+            let mut past_matrix = winner_matrix_past_matrices[i].copy();
+            let brute_force_depth = best_matrix.past_moves.len() as isize - past_matrix.past_moves.len() as isize;
+            if brute_force_depth > 7 {break;} // brute_force could take too long, stick to 6 or 7 (max 7 or 8)
+            if brute_force_depth < 0 {continue;} // brute_force would immediately end, save some performance
+
+
+            // run bruteforce
+            let mut discovered_matrices: HashSet<Matrix> = HashSet::new();
+            let better_matrix_option = brute_force(&mut past_matrix, best_matrix.past_moves.len(), &mut discovered_matrices);
+            if let Some(better_matrix) = better_matrix_option {
+                if better_matrix.past_moves.len() < best_matrix.past_moves.len() {
+                    best_matrix = better_matrix;
+                }
+            }
         }
     }
 
-    // depending on how much time this shit takes:
-    // I can also check each matrix for undiscovered moves x depth down
-    // the more stacks that are collapsed the deeper I think I can afford to go
-    // prune() also saves all matrices 
+    best_matrix
+}
+
+fn brute_force(matrix: &mut Matrix, max_len: usize, discovered_matrices: &mut HashSet<Matrix>) -> Option<Matrix> {
+    discovered_matrices.insert(matrix.copy());
+    if matrix.past_moves.len() >= max_len {
+        return None;
+    }
+    matrix.save_moves(true); // we don't need to find optimizations for non-cheated runs, only one is good enough anyway
+    if matrix.available_moves.is_empty() {
+        if matrix.is_win() {
+            return Some(matrix.copy());
+        } else {
+            return None
+        }
+    }
+    let mut best_matrix_option: Option<Matrix> = None;
+    for (_, next_matrix) in &matrix.available_moves {
+        if let Some(winner) = brute_force(&mut next_matrix.copy(), max_len, discovered_matrices) {
+            if let Some(best_matrix) = &best_matrix_option {
+                if best_matrix.past_moves.len() > winner.past_moves.len() {
+                    best_matrix_option = Some(winner);
+                }
+            } else {
+                best_matrix_option = Some(winner);
+            }
+        }
+    }
+    best_matrix_option
 }
 
 fn loop_wins(target_wins: usize, allow_cheats: bool) {
@@ -446,21 +509,21 @@ fn loop_wins(target_wins: usize, allow_cheats: bool) {
                 }
             }
         }
+        
+        if winners.is_empty() {
+            continue;
+        }
+        winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
 
-        // TODO:
-        // optimize solution(s)?
-        optimize_solutions(start_matrix, &winners, &past_matrices);
+        // find optimal solution, improve it
+        let winner = optimize_solutions(start_matrix, &winners);
 
         // execute best solution
-        if !winners.is_empty() {
-            winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
-            if allow_cheats && winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
-                continue;
-            }
-            // execute_moves(&mut matrix, &winners[0].past_moves);
-            println!("Shortest win found: {}", winners[0].past_moves.len());
-            iter_count += 1;
+        if allow_cheats && winner.past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
+            continue;
         }
+        execute_moves(&mut matrix, &winner.past_moves);
+        iter_count += 1;
     }
 }
 
