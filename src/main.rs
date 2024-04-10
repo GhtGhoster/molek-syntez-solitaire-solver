@@ -124,6 +124,35 @@ enum MoveValidity {
     Invalid,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Heuristic {
+    #[allow(unused)]
+    MoveCount,
+    HighestOrder,
+    None,
+}
+
+impl Heuristic {
+    // lower score is preferred
+    fn calculate(&self, matrix: &Matrix) -> usize {
+        match self {
+            Heuristic::MoveCount => matrix.valid_moves().len(),
+            Heuristic::HighestOrder => {
+                let mut ret = 40;
+                for stack in &matrix.stacks {
+                    if stack.collapsed {
+                        ret -= 10
+                    } else {
+                        ret -= stack.highest_orderly_count()
+                    }
+                }
+                ret
+            },
+            Heuristic::None => 0,
+        }
+    }
+}
+
 // 9 different types of cards, 4 sets of cards, 6 columns, 6 rows at the start, 36 cards total
 #[derive(Default)]
 struct Matrix {
@@ -329,32 +358,23 @@ impl Matrix {
         ret
     }
 
-    // lower score is preferred
-    fn heuristic_score(&self) -> usize {
-        // lets try counting inaccessible and non-orderly cards
-        // return self.valid_moves().len();
-        let mut ret = 40;
-
-        for stack in &self.stacks {
-            if stack.collapsed {
-                ret -= 10
-            } else {
-                ret -= stack.highest_orderly_count()
-            }
-        }
-
-        ret
-    }
-
-    fn save_moves(&mut self, allow_cheats: bool) {
+    fn save_moves(&mut self, allow_cheats: bool, heuristic: Heuristic) {
         self.available_moves = self
             .valid_moves()
             .iter()
             .map(|mov| (*mov, self.copy_after_move(*mov)))
             .filter(|(mov, _)| allow_cheats || self.check_validity(*mov) != MoveValidity::ValidCheat)
             .collect();
-        // prioritize low move count
-        self.available_moves.sort_by(|(_, a), (_, b)| a.heuristic_score().cmp(&b.heuristic_score()));
+        
+        if heuristic != Heuristic::None {
+            self.available_moves.sort_by(
+                |(_, a), (_, b)| {
+                    let ah = heuristic.calculate(a);
+                    let bh = heuristic.calculate(b);
+                    ah.cmp(&bh)
+                }
+            );
+        }
     }
 
     fn prune(&mut self, past_matrices: &HashSet<Matrix>) {
@@ -389,8 +409,12 @@ fn main() {
     //      - if winnable_state.moves_left + current_matrix.past_moves < max_len: return it
     //      - need a structure to hold winnable states and their moves_left
     //      - brute_force (and by extension optimize_solution) would need to return Vec<Move> instead
-    // - try to find a solution with the old heuristic when nothing is found
-    // - try to optimize the solution if it's over acceptable limit
+    // - sort stacks alphabetically when generating matrix string, hash, and comparison
+    //      - this should prevent equivalent gamestates with different order of stacks which doesn't matter
+    // - update acceptable solution length
+    //      - figure out average solution length
+    //      - add the time it takes to reroll divided by time per move
+    //      - keep as new acceptable solution length
     // - add CLI
 
     let start_time = Instant::now();
@@ -413,7 +437,7 @@ fn main() {
 
     loop_wins(5, true, false);
 
-    println!("Finished after {} seconds", start_time.elapsed().as_secs_f32());
+    println!("Finished after {:.02} seconds", start_time.elapsed().as_secs_f32());
 }
 
 // This expects sorted winner matrices
@@ -457,7 +481,7 @@ fn brute_force(matrix: &mut Matrix, max_len: usize, discovered_matrices: &mut Ha
     if matrix.past_moves.len() >= max_len {
         return None;
     }
-    matrix.save_moves(true); // we don't need to find optimizations for non-cheated runs, only one is good enough anyway
+    matrix.save_moves(true, Heuristic::None); // we don't need to find optimizations for non-cheated runs, only one is good enough anyway
     if matrix.available_moves.is_empty() {
         if matrix.is_win() {
             return Some(matrix.copy());
@@ -526,50 +550,67 @@ fn loop_wins(target_wins: usize, allow_cheats: bool, dry_run: bool) {
                 matrix_option.unwrap()
             }
         };
-        // made redundant by heuristic improvements, keeping for testing purposes
-        // let start_matrix = matrix.copy();
         
         // find solutions
-        let mut winners: Vec<Matrix> = vec![];
-        let mut past_matrices: HashSet<Matrix> = HashSet::new();
-        while past_matrices.len() < PAST_LIMIT {
-            if let Some(winner) = find_win(&mut matrix, &mut past_matrices, allow_cheats) {
-                // println!("Found solution: {} moves", winner.past_moves.len());
-                winners.push(winner);
-                if !allow_cheats {
-                    break;
+        let mut winners = find_multiple_wins(matrix.copy(), allow_cheats, Heuristic::HighestOrder);
+        println!("Best solution found: {} moves", winners[0].past_moves.len());
+        
+        // check for optimizations and different solutions or retry
+        if winners.is_empty() || (allow_cheats && winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN) {
+            if winners.is_empty() {
+                // no winners, try finding wins with a different heuristic
+                winners = find_multiple_wins(matrix.copy(), allow_cheats, Heuristic::MoveCount);
+                if winners.is_empty() || (allow_cheats && winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN) {
+                    if winners.is_empty() {
+                        println!("No solution found, reattempting...");
+                    } else {
+                        println!("Secondary solution over {} moves, reattempting...", ACCEPTABLE_SOLUTION_LEN);
+                    }
+                    matrix_option = None;
+                    continue;
+                } else {
+                    println!("Found a secondary solution!");
+                }
+            } else {
+                // solution too long, try to optimize it
+                // made redundant by heuristic improvements, keeping for testing purposes
+                let winner = optimize_solutions(matrix.copy(), &winners);
+                winners = vec![winner];
+                if allow_cheats && winners[0].past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
+                    println!("Couldn't optimize primary solution, reattempting...");
+                    matrix_option = None;
+                    continue;
+                } else {
+                    println!("Optimized primary solution!");
                 }
             }
         }
-        
-        if winners.is_empty() {
-            println!("No solution found, reattempting...");
-            matrix_option = None;
-            continue;
-        }
-        winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
-
-        // find optimal solution, improve it
-        // made redundant by heuristic improvements, keeping for testing purposes
-        // let winner = optimize_solutions(start_matrix, &winners);
-        // if dry_run {
-        //     println!("Optimized solution: {} moves", winner.past_moves.len());
-        // }
-
-        let winner = winners[0].copy();
 
         // execute best solution
-        if allow_cheats && winner.past_moves.len() > ACCEPTABLE_SOLUTION_LEN {
-            println!("Solution too long, over {} moves.", ACCEPTABLE_SOLUTION_LEN);
-            matrix_option = None;
-            continue;
-        }
-        println!("Executing solution: {} moves", winner.past_moves.len());
+        println!("Executing solution: {} moves", winners[0].past_moves.len());
         if !dry_run {
-            execute_moves(&mut matrix, &winner.past_moves);
+            execute_moves(&mut matrix, &winners[0].past_moves);
         }
         iter_count += 1;
     }
+}
+
+fn find_multiple_wins(matrix: Matrix, allow_cheats: bool, heuristic: Heuristic) -> Vec<Matrix> {
+    let mut winners: Vec<Matrix> = vec![];
+    let mut past_matrices: HashSet<Matrix> = HashSet::new();
+
+    while past_matrices.len() < PAST_LIMIT {
+        if let Some(winner) = find_win(&mut matrix.copy(), &mut past_matrices, allow_cheats, heuristic) {
+            // println!("Found solution: {} moves", winner.past_moves.len());
+            winners.push(winner);
+            if !allow_cheats {
+                break;
+            }
+        }
+    }
+
+    winners.sort_by(|a, b| a.past_moves.len().cmp(&b.past_moves.len()));
+    winners
 }
 
 fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
@@ -613,13 +654,13 @@ fn execute_moves(matrix: &mut Matrix, moves: &Vec<Move>) {
     }
 }
 
-fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_cheats: bool) -> Option<Matrix> {
+fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_cheats: bool, heuristic: Heuristic) -> Option<Matrix> {
     past_matrices.insert(matrix.copy());
     if allow_cheats && past_matrices.len() > PAST_LIMIT {
         return None;
     }
 
-    matrix.save_moves(allow_cheats);
+    matrix.save_moves(allow_cheats, heuristic);
     matrix.prune(&past_matrices);
 
     if matrix.available_moves.is_empty() {
@@ -633,7 +674,7 @@ fn find_win(matrix: &mut Matrix, past_matrices: &mut HashSet<Matrix>, allow_chea
             return None;
         }
         for i in 0..matrix.available_moves.len() {
-            let result = find_win(&mut matrix.available_moves[i].1, past_matrices, allow_cheats);
+            let result = find_win(&mut matrix.available_moves[i].1, past_matrices, allow_cheats, heuristic);
             if result.is_none() {
                 continue;
             } else {
